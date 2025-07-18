@@ -1,0 +1,110 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+ssh_pwauth: false
+disable_root: false
+
+users:
+  - name: root
+    shell: /bin/bash
+    lock_passwd: false
+    ssh_pwauth: false
+    sudo: ['ALL=(ALL) NOPASSWD:ALL']
+    ssh-authorized-keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIM8Ccn4YTPlBlOFZTyuy7hq7m5UTbXOA1zm130p6CvEM hetzner@adamg.nl
+
+packages:
+  - curl                     # Required for downloading scripts like k3s installer
+  - wget                     # Alternate downloader (for debugging or downloading extra files)
+  - git                      # Optional, helpful for cloning source code repositories
+  - unzip                    # Unzipping ZIP archives (useful for Java apps)
+  - tar                      # For extracting `.tar.gz` and `.tgz` files
+  - socat                    # Required by k3s for network tunneling
+  - iptables                 # Required by Kubernetes for network policies
+  - conntrack-tools          # Kubernetes requires this for tracking network connections
+  - bash-completion          # Helpful for command-line auto-completion (optional)
+  - firewalld                # Optional, firewall service (can open ports below)
+
+
+write_files:
+  - path: /etc/ssh/sshd_config.d/99-cloud-init-root.conf
+    content: |
+      PermitRootLogin yes
+      PasswordAuthentication no
+      ChallengeResponseAuthentication no
+      UsePAM yes
+    owner: root:root
+    permissions: '0644'
+
+  - path: /root/cluster-issuer.yaml
+    content: |
+      apiVersion: cert-manager.io/v1
+      kind: ClusterIssuer
+      metadata:
+        name: letsencrypt-http
+      spec:
+        acme:
+          server: https://acme-v02.api.letsencrypt.org/directory
+          email: letsencrypt.devenv.hetzner@adamg.nl
+          privateKeySecretRef:
+            name: letsencrypt-http
+          solvers:
+            - http01:
+                ingress:
+                  class: nginx
+    owner: root:root
+    permissions: '0644'
+
+runcmd:
+  # Configure firewall
+  - systemctl enable firewalld
+  - systemctl start firewalld
+  - firewall-cmd --permanent --add-service=http
+  - firewall-cmd --permanent --add-service=https
+  - firewall-cmd --reload
+
+  # Install and configure JDK
+  - curl -L -o /tmp/bellsoft.rpm https://download.bell-sw.com/java/21.0.8+12/bellsoft-jdk21.0.8+12-linux-amd64-lite.rpm
+  - rpm -ivh /tmp/bellsoft.rpm
+  - echo 'export JAVA_HOME=/usr/lib/jvm/bellsoft-java21-lite' >> /etc/profile.d/java.sh
+  - echo 'export PATH=$JAVA_HOME/bin:$PATH' >> /etc/profile.d/java.sh
+
+  # Install and configure k3s
+  - curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--disable=traefik" sh -
+  - systemctl enable k3s
+  - systemctl start k3s
+  - ln -s /usr/local/bin/k3s /usr/local/bin/kubectl
+  - mkdir -p /root/.kube
+  - cp /etc/rancher/k3s/k3s.yaml /root/.kube/config
+  - chown root:root /root/.kube/config
+  - chmod 600 /root/.kube/config
+
+  # --- Wait for Kubernetes API to be ready ---
+  - |
+    for i in $(seq 1 30); do
+      kubectl get nodes && break || sleep 5
+    done
+
+  # --- Install NGINX Ingress Controller ---
+  - kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.9.4/deploy/static/provider/cloud/deploy.yaml
+
+  # --- Wait for NGINX Ingress Controller to be ready ---
+  - |
+    for i in $(seq 1 30); do
+      READY=$(kubectl -n ingress-nginx get pods -l app.kubernetes.io/component=controller -o jsonpath='{.items[0].status.containerStatuses[0].ready}')
+      [ "$READY" = "true" ] && break || sleep 5
+    done
+
+  # --- Install Cert-Manager ---
+  - kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.14.4/cert-manager.yaml
+
+  # --- Wait for Cert-Manager to be ready ---
+  - |
+    for i in $(seq 1 30); do
+      READY=$(kubectl -n cert-manager get pods -l app.kubernetes.io/name=cert-manager -o jsonpath='{.items[0].status.containerStatuses[0].ready}')
+      [ "$READY" = "true" ] && break || sleep 5
+    done
+
+  # --- Apply Let’s Encrypt ClusterIssuer (HTTP challenge) ---
+  - kubectl apply -f /root/cluster-issuer.yaml
+  

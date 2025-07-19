@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
-set -x;
+set -o errexit
+set -o nounset
+set -o pipefail
+set -o errtrace
+set -o xtrace
 
 
 
 ### Sets up a K8S-compatible cluster on a VPS, using the lightweight K0S implementation.
 function main() {
-  yum -y update;
-  yum -y upgrade;
+  dnf -y update;
+  dnf -y upgrade;
   installPackages;
   downloadDependencies;
   setupSsh;
@@ -47,7 +51,8 @@ function installPackages() {
     fuse-libs
     kernel-modules-extra
   );
-  yum install -y "${packages[@]}";
+  dnf install -y epel-release; # 'Extra Packages for Enterprise Linux' (e.g. htop, fail2ban)
+  dnf install -y "${packages[@]}";
 }
 
 

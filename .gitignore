@@ -1,0 +1,13 @@
+# ignore everything inside dot-directories, except of .gitignore files
+**/.*/**
+!**/.*/.gitignore
+
+# ignore build output
+build/
+dist/
+out/
+
+# ignore auto-imported build system files
+gradle/wrapper/
+gradlew
+gradlew.bat

@@ -56,34 +56,6 @@ function installPackages() {
 }
 
 
-function setupSsh() {
-  local sshdCustomConf="/etc/ssh/sshd_config.d/99-cloud-init-root.conf";
-  mkdir -p "$(dirname "${sshdCustomConf}")";
-  cat > "${sshdCustomConf}" <<EOF
-PermitRootLogin yes
-PasswordAuthentication no
-ChallengeResponseAuthentication no
-UsePAM yes
-Port 22
-MaxAuthTries 2
-AuthorizedKeysFile .ssh/authorized_keys
-AllowUsers root
-EOF;
-  chmod 644 "${sshdCustomConf}";
-}
-
-
-function setupNetworkSecurity() {
-  echo "[sshd]\nenabled = true\nbanaction = iptables-multiport" > /etc/fail2ban/jail.local;
-  systemctl enable fail2ban;
-  systemctl enable firewalld;
-  systemctl start firewalld;
-  firewall-cmd --permanent --add-service=http;
-  firewall-cmd --permanent --add-service=https;
-  firewall-cmd --permanent --add-service=ssh;
-}
-
-
 function downloadDependencies() {
   # Create the dependencies directory if it doesn't exist
   mkdir -p /devenv/dependencies;
@@ -103,6 +75,34 @@ function downloadDependencies() {
   curl -L -o /devenv/dependencies/nginx-ingress.yaml https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.9.4/deploy/static/provider/cloud/deploy.yaml;
   curl -L -o /devenv/dependencies/cert-manager.yaml https://github.com/cert-manager/cert-manager/releases/download/v1.14.4/cert-manager.yaml;
   curl -L -o /devenv/dependencies/flannel.yaml https://raw.githubusercontent.com/flannel-io/flannel/v0.23.0/Documentation/kube-flannel.yml;
+}
+
+
+function setupSsh() {
+  local sshdCustomConf="/etc/ssh/sshd_config.d/99-cloud-init-root.conf";
+  mkdir -p "$(dirname "${sshdCustomConf}")";
+  cat > "${sshdCustomConf}" <<EOF
+PermitRootLogin yes
+PasswordAuthentication no
+ChallengeResponseAuthentication no
+UsePAM yes
+Port 22
+MaxAuthTries 2
+AuthorizedKeysFile .ssh/authorized_keys
+AllowUsers root
+EOF
+  chmod 644 "${sshdCustomConf}";
+}
+
+
+function setupNetworkSecurity() {
+  echo "[sshd]\nenabled = true\nbanaction = iptables-multiport" > /etc/fail2ban/jail.local;
+  systemctl enable fail2ban;
+  systemctl enable firewalld;
+  systemctl start firewalld;
+  firewall-cmd --permanent --add-service=http;
+  firewall-cmd --permanent --add-service=https;
+  firewall-cmd --permanent --add-service=ssh;
 }
 
 

@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -o xtrace
+PARENT_DIR="$(dirname "${0}")/.."
+git -C "${PARENT_DIR}" reset --hard HEAD
+git -C "${PARENT_DIR}" pull

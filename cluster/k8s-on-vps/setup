@@ -178,7 +178,7 @@ function installNginxIngress() {
   # Wait for NGINX Ingress Controller to be ready
   local ready=false;
   for iteration in $(seq 1 30); do
-    ready=$(kubectl -n ingress-nginx get pods -l app.kubernetes.io/component=controller -o jsonpath='{.items[0].status.containerStatuses[0].ready}');
+    ready=$(kubectl -n ingress-nginx get pods -l app.kubernetes.io/component=controller -o jsonpath='{.items[0].status.containerStatuses[0].ready}' || true);
     if [[ ${ready} == true ]]; then
       break;
     fi

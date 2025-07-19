@@ -107,10 +107,16 @@ function setupNetworkSecurity() {
 
 
 function setupJdk() {
-  # Install JDK from the downloaded package
+  if rpm -q bellsoft-java21-lite &>/dev/null; then
+    return;
+  fi
   rpm -ivh /devenv/dependencies/jdk.rpm;
-  echo 'export JAVA_HOME=/usr/lib/jvm/bellsoft-java21-lite' >> /etc/profile.d/java.sh;
+  export JAVA_HOME="/usr/lib/jvm/bellsoft-java21-lite";
+  echo 'export JAVA_HOME='"${JAVA_HOME}" >> /etc/profile.d/java.sh;
   echo 'export PATH=$JAVA_HOME/bin:$PATH' >> /etc/profile.d/java.sh;
+  IFS=$'\n'; for file in $(find "${JAVA_HOME}/bin" -type f -executable); do
+    ln -sf "${file}" "/usr/local/bin/$(basename "${file}")"
+  done
 }
 
 

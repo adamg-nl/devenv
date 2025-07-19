@@ -120,15 +120,30 @@ function setupK0s() {
   k0s install controller --single;
   k0s start;
   
-  # Create symlink for kubectl if not present
   if [[ ! -f /usr/local/bin/kubectl ]]; then
-    ln -s $(k0s kubectl 2>/dev/null | grep -o '/.*k0s.*kubectl') /usr/local/bin/kubectl;
+    cat > /usr/local/bin/kubectl <<EOF
+#!/usr/bin/env bash
+exec $(which k0s) kubectl "\${@}"
+EOF
+    chmod +x /usr/local/bin/kubectl;
   fi
   
-  # Wait for Kubernetes API to be ready
-  for iteration in $(seq 1 30); do
+  local kubeConfigPath="${HOME}/.kube/config";
+  mkdir -p "$(dirname "${kubeConfigPath}")";
+  k0s kubeconfig admin > "${kubeConfigPath}";
+  chmod 600 "${kubeConfigPath}";
+  export KUBECONFIG="${kubeConfigPath}";
+  
+  for i in $(seq 1 30); do
     if kubectl get nodes &>/dev/null; then
+      kubectl get nodes
       break;
+    fi
+    if [[ ${i} == 30 ]]; then
+      echo "Timed out waiting for Kubernetes API to become ready" >&2;
+      k0s status >&2 || true;
+      systemctl status k0scontroller >&2 || true;
+      journalctl -u k0scontroller -n 50 >&2 || true;
     fi
     sleep 5;
   done

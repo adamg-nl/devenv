@@ -1,0 +1,55 @@
+#cloud-config
+package_update: true
+package_upgrade: true
+ssh_pwauth: false
+disable_root: false
+
+users:
+  - name: root
+    shell: /bin/bash
+    lock_passwd: false
+    ssh_pwauth: false
+    sudo: ['ALL=(ALL) NOPASSWD:ALL']
+    ssh-authorized-keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIM8Ccn4YTPlBlOFZTyuy7hq7m5UTbXOA1zm130p6CvEM hetzner@adamg.nl
+
+packages:
+  # shell utils
+  - curl
+  - wget
+  - git
+  - unzip
+  - tar
+  - bash-completion
+  - jq
+  - bind-utils
+  - nano
+  - htop
+  - rsync
+  - lsof
+  - net-tools
+  # kuberenetes dependencies
+  - socat            # network tunneling
+  - iptables         # network policies
+  - conntrack-tools  # network connection tracking
+  - firewalld        # firewall service
+  # misc
+  - maven
+  - fail2ban
+
+write_files:
+  - path: /etc/ssh/sshd_config.d/99-cloud-init-root.conf
+    content: |
+      PermitRootLogin yes
+      PasswordAuthentication no
+      ChallengeResponseAuthentication no
+      UsePAM yes
+    owner: root:root
+    permissions: '0644'
+
+runcmd:
+  - mkdir /devenv
+  - git clone https://github.com/adamg-nl/devenv.git /devenv
+  - chmod +x /devenv/cluster/k8s-on-vps/setup
+  - /devenv/cluster/k8s-on-vps/setup
+  - reboot

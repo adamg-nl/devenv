@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+
+set -x
+
+# setup ssh
+sed -i -e '/^\(#\|\)PermitRootLogin/s/^.*$/PermitRootLogin yes/' /etc/ssh/sshd_config
+sed -i -e '/^\(#\|\)PasswordAuthentication/s/^.*$/PasswordAuthentication no/' /etc/ssh/sshd_config
+sed -i -e '/^\(#\|\)Port/s/^.*$/Port 22/' /etc/ssh/sshd_config
+sed -i -e '/^\(#\|\)MaxAuthTries/s/^.*$/MaxAuthTries 2/' /etc/ssh/sshd_config
+sed -i -e '/^\(#\|\)AuthorizedKeysFile/s/^.*$/AuthorizedKeysFile .ssh\/authorized_keys/' /etc/ssh/sshd_config
+sed -i '$a AllowUsers root' /etc/ssh/sshd_config
+
+# setup network security
+printf "[sshd]\nenabled = true\nbanaction = iptables-multiport" > /etc/fail2ban/jail.local
+systemctl enable fail2ban
+systemctl enable firewalld
+systemctl start firewalld
+firewall-cmd --permanent --add-service=http
+firewall-cmd --permanent --add-service=https
+firewall-cmd --permanent --add-service=ssh
+
+# Install and configure JDK
+curl -L -o /tmp/bellsoft.rpm https://download.bell-sw.com/java/21.0.8+12/bellsoft-jdk21.0.8+12-linux-amd64-lite.rpm
+rpm -ivh /tmp/bellsoft.rpm
+echo 'export JAVA_HOME=/usr/lib/jvm/bellsoft-java21-lite' >> /etc/profile.d/java.sh
+echo 'export PATH=$JAVA_HOME/bin:$PATH' >> /etc/profile.d/java.sh
+
+# Install and configure k3s
+curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--disable=traefik" sh -
+systemctl enable k3s
+systemctl start k3s
+ln -s /usr/local/bin/k3s /usr/local/bin/kubectl
+mkdir -p /root/.kube
+cp /etc/rancher/k3s/k3s.yaml /root/.kube/config
+chown root:root /root/.kube/config
+chmod 600 /root/.kube/config
+
+# Wait for Kubernetes API to be ready
+for i in $(seq 1 30); do
+  kubectl get nodes && break || sleep 5
+done
+
+# Install NGINX Ingress Controller
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.9.4/deploy/static/provider/cloud/deploy.yaml
+
+# Wait for NGINX Ingress Controller to be ready
+for i in $(seq 1 30); do
+  READY=$(kubectl -n ingress-nginx get pods -l app.kubernetes.io/component=controller -o jsonpath='{.items[0].status.containerStatuses[0].ready}')
+  [ "$READY" = "true" ] && break || sleep 5
+done
+
+# Install Cert-Manager
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.14.4/cert-manager.yaml
+
+# Wait for Cert-Manager to be ready
+for i in $(seq 1 30); do
+  READY=$(kubectl -n cert-manager get pods -l app.kubernetes.io/name=cert-manager -o jsonpath='{.items[0].status.containerStatuses[0].ready}')
+  [ "$READY" = "true" ] && break || sleep 5
+done
+
+# Apply Let’s Encrypt ClusterIssuer (HTTP challenge)
+kubectl apply -f /devenv/cluster/k8s-on-vps/config/cluster-issuer.yaml
+
+# Set up CoreDNS for dynamic DNS management
+mkdir -p /etc/coredns/db.devenv.hetzner.adamg.nl
+kubectl apply -f /devenv/cluster/k8s-on-vps/config/coredns-custom.yaml
+kubectl rollout restart deployment coredns -n kube-system
+
+# Apply ExternalDNS for automatic DNS record management
+kubectl apply -f /devenv/cluster/k8s-on-vps/config/external-dns.yaml
+
+# Deploy container provisioner API service
+kubectl apply -f /devenv/cluster/k8s-on-vps/config/api-service.yaml
+
+# Configure firewall to allow SSH access to containers
+firewall-cmd --permanent --add-service=ssh
+firewall-cmd --reload
+
+# Create SSH key management service
+chmod +x /devenv/cluster/k8s-on-vps/ssh-key-manager.sh
+
+# Create container network for dynamic provisioning
+kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml
+
+# Apply Resource Quotas for container limits
+cat << EOF | kubectl apply -f -
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: default-quota
+  namespace: default
+spec:
+  hard:
+    pods: "10"
+    requests.cpu: "2"
+    requests.memory: 3.5Gi
+    limits.cpu: "2"
+    limits.memory: 3.5Gi
+EOF

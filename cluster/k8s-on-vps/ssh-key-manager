@@ -1,0 +1,54 @@
+#!/bin/bash
+# Script to manage SSH keys for dynamic container users
+
+# Usage: ./ssh-key-manager add <username> <public_key>
+# or: ./ssh-key-manager remove <username>
+
+ACTION=$1
+USERNAME=$2
+PUBLIC_KEY=$3
+
+if [ "$ACTION" == "add" ]; then
+if [ -z "$USERNAME" ] || [ -z "$PUBLIC_KEY" ]; then
+    echo "Error: Username and public key required for add action"
+    exit 1
+fi
+
+# Check if user exists, create if not
+if ! id "$USERNAME" &>/dev/null; then
+    useradd -m -s /bin/bash "$USERNAME"
+fi
+
+# Set up SSH directory and authorized_keys
+USER_HOME=$(eval echo ~$USERNAME)
+mkdir -p "$USER_HOME/.ssh"
+echo "$PUBLIC_KEY" > "$USER_HOME/.ssh/authorized_keys"
+chmod 700 "$USER_HOME/.ssh"
+chmod 600 "$USER_HOME/.ssh/authorized_keys"
+chown -R "$USERNAME:$USERNAME" "$USER_HOME/.ssh"
+
+echo "SSH key added for user $USERNAME"
+
+elif [ "$ACTION" == "remove" ]; then
+if [ -z "$USERNAME" ]; then
+    echo "Error: Username required for remove action"
+    exit 1
+fi
+
+# Check if user exists
+if id "$USERNAME" &>/dev/null; then
+    # Remove user and home directory
+    userdel -r "$USERNAME"
+    echo "User $USERNAME removed"
+else
+    echo "User $USERNAME does not exist"
+    exit 1
+fi
+
+else
+echo "Usage: $0 add <username> <public_key>"
+echo "   or: $0 remove <username>"
+exit 1
+fi
+
+exit 0

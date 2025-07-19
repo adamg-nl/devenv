@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: container-provisioner-api
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: container-provisioner-api
+  template:
+    metadata:
+      labels:
+        app: container-provisioner-api
+    spec:
+      containers:
+      - name: api
+        image: bellsoft/liberica-runtime-container:jdk-21
+        ports:
+        - containerPort: 8080
+        volumeMounts:
+        - name: kube-config
+          mountPath: /root/.kube
+          readOnly: true
+        - name: ssh-manager
+          mountPath: /usr/local/bin/ssh-key-manager.sh
+          readOnly: true
+        - name: docker-sock
+          mountPath: /var/run/docker.sock
+        env:
+        - name: DOMAIN_SUFFIX
+          value: "devenv.hetzner.adamg.nl"
+        securityContext:
+          privileged: true
+      volumes:
+      - name: kube-config
+        hostPath:
+          path: /root/.kube
+      - name: ssh-manager
+        hostPath:
+          path: /root/ssh-key-manager.sh
+      - name: docker-sock
+        hostPath:
+          path: /var/run/docker.sock
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: container-provisioner-api
+  namespace: default
+spec:
+  selector:
+    app: container-provisioner-api
+  ports:
+  - port: 80
+    targetPort: 8080
+  type: ClusterIP
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: container-provisioner-api
+  namespace: default
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-http"
+    kubernetes.io/ingress.class: "nginx"
+spec:
+  tls:
+  - hosts:
+    - "api.devenv.hetzner.adamg.nl"
+    secretName: api-tls
+  rules:
+  - host: "api.devenv.hetzner.adamg.nl"
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: container-provisioner-api
+            port:
+              number: 80

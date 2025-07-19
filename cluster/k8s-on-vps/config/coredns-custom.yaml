@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coredns-custom
+  namespace: kube-system
+data:
+  devenv.server: |
+    devenv.hetzner.adamg.nl:53 {
+        log
+        errors
+        auto {
+            directory /etc/coredns/db.devenv.hetzner.adamg.nl
+            reload 10s
+        }
+        forward . /etc/resolv.conf
+    }

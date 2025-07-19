@@ -123,8 +123,8 @@ function setupJdk() {
 function setupK0s() {
   cp /devenv/dependencies/k0s /usr/local/bin/k0s;
   chmod +x /usr/local/bin/k0s;
-  k0s install controller --single;
-  k0s start;
+  k0s install controller --single || true;
+  k0s start || true;
   
   if [[ ! -f /usr/local/bin/kubectl ]]; then
     cat > /usr/local/bin/kubectl <<EOF

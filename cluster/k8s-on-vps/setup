@@ -192,11 +192,19 @@ function installCertManager() {
   kubectl apply -f /devenv/dependencies/cert-manager.yaml;
 
   # Wait for Cert-Manager to be ready
-  local ready=false;
   for iteration in $(seq 1 30); do
-    ready=$(kubectl -n cert-manager get pods -l app.kubernetes.io/name=cert-manager -o jsonpath='{.items[0].status.containerStatuses[0].ready}');
-    if [[ ${ready} == true ]]; then
-      break;
+    if [[ $(kubectl -n cert-manager get pods -l app.kubernetes.io/name=cert-manager -o jsonpath='{.items[0].status.containerStatuses[0].ready}') == true ]] && \
+      kubectl get validatingwebhookconfiguration cert-manager-webhook &>/dev/null && \
+      kubectl -n cert-manager get service cert-manager-webhook &>/dev/null && \
+      kubectl -n cert-manager get endpoints cert-manager-webhook -o json | grep -q '"addresses"' && \
+      kubectl api-resources --api-group=cert-manager.io &>/dev/null; then
+        break;
+      fi
+    fi
+    
+    if [[ ${iteration} -eq 30 ]]; then
+      echo "Warning: Timed out waiting for cert-manager webhook to be ready." >&2;
+      exit 1;
     fi
     sleep 5;
   done

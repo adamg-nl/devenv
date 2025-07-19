@@ -229,7 +229,7 @@ function applyOrchestratorApiService() {
   kubectl apply -f /devenv/internal/cluster/k8s-on-vps/config/api-service.yaml;
   
   # Create SSH key management service
-  chmod +x /devenv/internal/cluster/k8s-on-vps/ssh-key-manager.sh;
+  chmod +x /devenv/internal/cluster/k8s-on-vps/ssh-key-manager;
 }
 
 

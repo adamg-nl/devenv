@@ -111,7 +111,7 @@ function setupJdk() {
     return;
   fi
   rpm -ivh /devenv/dependencies/jdk.rpm;
-  export JAVA_HOME="/usr/lib/jvm/bellsoft-java21-lite";
+  export JAVA_HOME="$(realpath "$(dirname "$(readlink -f $(which java))")/..")";
   echo 'export JAVA_HOME='"${JAVA_HOME}" >> /etc/profile.d/java.sh;
   echo 'export PATH=$JAVA_HOME/bin:$PATH' >> /etc/profile.d/java.sh;
   IFS=$'\n'; for file in $(find "${JAVA_HOME}/bin" -type f -executable); do

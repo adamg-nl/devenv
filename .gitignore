@@ -1,6 +1,9 @@
-# ignore everything inside dot-directories, except of .gitignore files
+# ignore everything inside dot-directories
 **/.*/**
+
+# except of these
 !**/.*/.gitignore
+!/.gitattributes
 
 # ignore build output
 build/

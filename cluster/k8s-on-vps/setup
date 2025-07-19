@@ -1,89 +1,199 @@
 #!/usr/bin/env bash
+set -x;
 
-set -x
 
-# setup ssh
-sed -i -e '/^\(#\|\)PermitRootLogin/s/^.*$/PermitRootLogin yes/' /etc/ssh/sshd_config
-sed -i -e '/^\(#\|\)PasswordAuthentication/s/^.*$/PasswordAuthentication no/' /etc/ssh/sshd_config
-sed -i -e '/^\(#\|\)Port/s/^.*$/Port 22/' /etc/ssh/sshd_config
-sed -i -e '/^\(#\|\)MaxAuthTries/s/^.*$/MaxAuthTries 2/' /etc/ssh/sshd_config
-sed -i -e '/^\(#\|\)AuthorizedKeysFile/s/^.*$/AuthorizedKeysFile .ssh\/authorized_keys/' /etc/ssh/sshd_config
-sed -i '$a AllowUsers root' /etc/ssh/sshd_config
 
-# setup network security
-printf "[sshd]\nenabled = true\nbanaction = iptables-multiport" > /etc/fail2ban/jail.local
-systemctl enable fail2ban
-systemctl enable firewalld
-systemctl start firewalld
-firewall-cmd --permanent --add-service=http
-firewall-cmd --permanent --add-service=https
-firewall-cmd --permanent --add-service=ssh
+### Sets up a K8S-compatible cluster on a VPS, using the lightweight K0S implementation.
+function main() {
+  yum -y update;
+  yum -y upgrade;
+  installPackages;
+  downloadDependencies;
+  setupSsh;
+  setupNetworkSecurity;
+  setupJdk;
+  setupK0s;
+  installNginxIngress;
+  installCertManager;
+  setupDnsManagement;
+  applyOrchestratorApiService;
+  setupNetworking;
+  setupResourceQuotas;
+  reboot;
+}
 
-# Install and configure JDK
-curl -L -o /tmp/bellsoft.rpm https://download.bell-sw.com/java/21.0.8+12/bellsoft-jdk21.0.8+12-linux-amd64-lite.rpm
-rpm -ivh /tmp/bellsoft.rpm
-echo 'export JAVA_HOME=/usr/lib/jvm/bellsoft-java21-lite' >> /etc/profile.d/java.sh
-echo 'export PATH=$JAVA_HOME/bin:$PATH' >> /etc/profile.d/java.sh
 
-# Install and configure k3s
-curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--disable=traefik" sh -
-systemctl enable k3s
-systemctl start k3s
-ln -s /usr/local/bin/k3s /usr/local/bin/kubectl
-mkdir -p /root/.kube
-cp /etc/rancher/k3s/k3s.yaml /root/.kube/config
-chown root:root /root/.kube/config
-chmod 600 /root/.kube/config
+function installPackages() {
+  local packages=(
+    curl
+    wget
+    git
+    unzip
+    tar
+    jq
+    bind-utils
+    nano
+    htop
+    rsync
+    lsof
+    net-tools
+    socat
+    iptables
+    conntrack-tools
+    firewalld
+    maven
+    fail2ban
+    fuse
+    fuse-libs
+    kernel-modules-extra
+  );
+  yum install -y "${packages[@]}";
+}
 
-# Wait for Kubernetes API to be ready
-for i in $(seq 1 30); do
-  kubectl get nodes && break || sleep 5
-done
 
-# Install NGINX Ingress Controller
-kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.9.4/deploy/static/provider/cloud/deploy.yaml
+function setupSsh() {
+  local sshdCustomConf="/etc/ssh/sshd_config.d/99-cloud-init-root.conf";
+  mkdir -p "$(dirname "${sshdCustomConf}")";
+  cat > "${sshdCustomConf}" <<EOF
+PermitRootLogin yes
+PasswordAuthentication no
+ChallengeResponseAuthentication no
+UsePAM yes
+Port 22
+MaxAuthTries 2
+AuthorizedKeysFile .ssh/authorized_keys
+AllowUsers root
+EOF;
+  chmod 644 "${sshdCustomConf}";
+}
 
-# Wait for NGINX Ingress Controller to be ready
-for i in $(seq 1 30); do
-  READY=$(kubectl -n ingress-nginx get pods -l app.kubernetes.io/component=controller -o jsonpath='{.items[0].status.containerStatuses[0].ready}')
-  [ "$READY" = "true" ] && break || sleep 5
-done
 
-# Install Cert-Manager
-kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.14.4/cert-manager.yaml
+function setupNetworkSecurity() {
+  echo "[sshd]\nenabled = true\nbanaction = iptables-multiport" > /etc/fail2ban/jail.local;
+  systemctl enable fail2ban;
+  systemctl enable firewalld;
+  systemctl start firewalld;
+  firewall-cmd --permanent --add-service=http;
+  firewall-cmd --permanent --add-service=https;
+  firewall-cmd --permanent --add-service=ssh;
+}
 
-# Wait for Cert-Manager to be ready
-for i in $(seq 1 30); do
-  READY=$(kubectl -n cert-manager get pods -l app.kubernetes.io/name=cert-manager -o jsonpath='{.items[0].status.containerStatuses[0].ready}')
-  [ "$READY" = "true" ] && break || sleep 5
-done
 
-# Apply Let’s Encrypt ClusterIssuer (HTTP challenge)
-kubectl apply -f /devenv/cluster/k8s-on-vps/config/cluster-issuer.yaml
+function downloadDependencies() {
+  # Create the dependencies directory if it doesn't exist
+  mkdir -p /devenv/dependencies;
 
-# Set up CoreDNS for dynamic DNS management
-mkdir -p /etc/coredns/db.devenv.hetzner.adamg.nl
-kubectl apply -f /devenv/cluster/k8s-on-vps/config/coredns-custom.yaml
-kubectl rollout restart deployment coredns -n kube-system
+  # curl -L (--location): follow HTTP redirects
+  # curl -o (--output): the output file 
+  
+  # JDK package
+  curl -L -o /devenv/dependencies/jdk.rpm https://download.bell-sw.com/java/21.0.8+12/bellsoft-jdk21.0.8+12-linux-amd64-lite.rpm;
+  
+  # K0s binary
+  local version=$(curl -s https://api.github.com/repos/k0sproject/k0s/releases/latest | grep tag_name | cut -d '"' -f4);
+  curl -L -o /devenv/dependencies/k0s "https://github.com/k0sproject/k0s/releases/download/${version}/k0s-${version}-amd64";
+  chmod +x /devenv/dependencies/k0s;
+  
+  # Kubernetes manifests
+  curl -L -o /devenv/dependencies/nginx-ingress.yaml https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.9.4/deploy/static/provider/cloud/deploy.yaml;
+  curl -L -o /devenv/dependencies/cert-manager.yaml https://github.com/cert-manager/cert-manager/releases/download/v1.14.4/cert-manager.yaml;
+  curl -L -o /devenv/dependencies/flannel.yaml https://raw.githubusercontent.com/flannel-io/flannel/v0.23.0/Documentation/kube-flannel.yml;
+}
 
-# Apply ExternalDNS for automatic DNS record management
-kubectl apply -f /devenv/cluster/k8s-on-vps/config/external-dns.yaml
 
-# Deploy container provisioner API service
-kubectl apply -f /devenv/cluster/k8s-on-vps/config/api-service.yaml
+function setupJdk() {
+  # Install JDK from the downloaded package
+  rpm -ivh /devenv/dependencies/jdk.rpm;
+  echo 'export JAVA_HOME=/usr/lib/jvm/bellsoft-java21-lite' >> /etc/profile.d/java.sh;
+  echo 'export PATH=$JAVA_HOME/bin:$PATH' >> /etc/profile.d/java.sh;
+}
 
-# Configure firewall to allow SSH access to containers
-firewall-cmd --permanent --add-service=ssh
-firewall-cmd --reload
 
-# Create SSH key management service
-chmod +x /devenv/cluster/k8s-on-vps/ssh-key-manager.sh
+function setupK0s() {
+  cp /devenv/dependencies/k0s /usr/local/bin/k0s;
+  chmod +x /usr/local/bin/k0s;
+  k0s install controller --single;
+  k0s start;
+  
+  # Create symlink for kubectl if not present
+  if [[ ! -f /usr/local/bin/kubectl ]]; then
+    ln -s $(k0s kubectl 2>/dev/null | grep -o '/.*k0s.*kubectl') /usr/local/bin/kubectl;
+  fi
+  
+  # Wait for Kubernetes API to be ready
+  for iteration in $(seq 1 30); do
+    if kubectl get nodes &>/dev/null; then
+      break;
+    fi
+    sleep 5;
+  done
+}
 
-# Create container network for dynamic provisioning
-kubectl apply -f https://raw.githubusercontent.com/flannel-io/flannel/master/Documentation/kube-flannel.yml
 
-# Apply Resource Quotas for container limits
-cat << EOF | kubectl apply -f -
+function installNginxIngress() {
+  # Install NGINX Ingress Controller from downloaded manifest
+  kubectl apply -f /devenv/dependencies/nginx-ingress.yaml;
+
+  # Wait for NGINX Ingress Controller to be ready
+  local ready=false;
+  for iteration in $(seq 1 30); do
+    ready=$(kubectl -n ingress-nginx get pods -l app.kubernetes.io/component=controller -o jsonpath='{.items[0].status.containerStatuses[0].ready}');
+    if [[ ${ready} == true ]]; then
+      break;
+    fi
+    sleep 5;
+  done
+}
+
+
+function installCertManager() {
+  # Install Cert-Manager from downloaded manifest
+  kubectl apply -f /devenv/dependencies/cert-manager.yaml;
+
+  # Wait for Cert-Manager to be ready
+  local ready=false;
+  for iteration in $(seq 1 30); do
+    ready=$(kubectl -n cert-manager get pods -l app.kubernetes.io/name=cert-manager -o jsonpath='{.items[0].status.containerStatuses[0].ready}');
+    if [[ ${ready} == true ]]; then
+      break;
+    fi
+    sleep 5;
+  done
+
+  # Apply Let's Encrypt ClusterIssuer (HTTP challenge)
+  kubectl apply -f /devenv/internal/cluster/k8s-on-vps/config/cluster-issuer.yaml;
+}
+
+
+function setupDnsManagement() {
+  # Set up CoreDNS for dynamic DNS management
+  mkdir -p /etc/coredns/db.devenv.hetzner.adamg.nl;
+  kubectl apply -f /devenv/internal/cluster/k8s-on-vps/config/coredns-custom.yaml;
+  kubectl rollout restart deployment coredns -n kube-system;
+
+  # Apply ExternalDNS for automatic DNS record management
+  kubectl apply -f /devenv/internal/cluster/k8s-on-vps/config/external-dns.yaml;
+}
+
+
+function applyOrchestratorApiService() {
+  # Deploy container provisioner API service
+  kubectl apply -f /devenv/internal/cluster/k8s-on-vps/config/api-service.yaml;
+  
+  # Create SSH key management service
+  chmod +x /devenv/internal/cluster/k8s-on-vps/ssh-key-manager.sh;
+}
+
+
+function setupNetworking() {
+  # Create container network for dynamic provisioning using downloaded manifest
+  kubectl apply -f /devenv/dependencies/flannel.yaml;
+}
+
+
+function setupResourceQuotas() {
+  # Apply Resource Quotas for container limits
+  cat << EOF | kubectl apply -f -
 apiVersion: v1
 kind: ResourceQuota
 metadata:
@@ -97,3 +207,8 @@ spec:
     limits.cpu: "2"
     limits.memory: 3.5Gi
 EOF
+}
+
+
+
+main "${@:-}";
